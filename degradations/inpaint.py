@@ -12,6 +12,7 @@ Paper: Appendix B.2, Eqs. 25–26.
 
 from __future__ import annotations
 
+import torch
 from torch import Tensor
 
 from configs import InpaintConfig
@@ -22,25 +23,23 @@ from interfaces import PnPSolver
 # Degradation operator
 # ---------------------------------------------------------------------------
 
+
 class InpaintingDegradation:
     """Inpainting degradation: element-wise masking y = M ⊙ x.
 
     State:
         mask: Binary mask tensor M, shape (1, 1, H, W) or (B, 1, H, W), float32.
             1 = known pixel, 0 = missing pixel.
-        cfg: InpaintConfig describing mask type and parameters.
     """
 
-    def __init__(self, mask: Tensor, cfg: InpaintConfig) -> None:
+    def __init__(self, mask: Tensor) -> None:
         """Initialise with a pre-computed mask tensor.
 
         Args:
             mask: Binary mask M, shape (1, 1, H, W) or (B, 1, H, W), float32.
                 1 = observed, 0 = missing.
-            cfg: InpaintConfig.
         """
         self.mask = mask
-        self.cfg = cfg
 
     def apply(self, x: Tensor) -> Tensor:
         """Apply the masking operator: y = M ⊙ x.
@@ -53,7 +52,7 @@ class InpaintingDegradation:
 
         Paper: Eq. 25.
         """
-        raise NotImplementedError
+        return self.mask * x
 
 
 def build_box_mask(
@@ -75,7 +74,15 @@ def build_box_mask(
 
     Paper: Section 4.1 — 128×128 box region following [8].
     """
-    raise NotImplementedError
+
+    M = torch.ones((1, 1, height, width), device=device, dtype=torch.float32)
+
+    i = (height - box_size) // 2
+    j = (width - box_size) // 2
+
+    M[..., i : i + box_size, j : j + box_size] = 0
+
+    return M
 
 
 def build_random_mask(
@@ -97,12 +104,30 @@ def build_random_mask(
 
     Paper: Section 4.1 — random masks masking half the total pixels.
     """
-    raise NotImplementedError
+    M = torch.rand((1, 1, height, width), device=device, dtype=torch.float32)
+
+    return (M > fraction).float()
+
+
+def build_mask(
+    cfg: InpaintConfig, height: int, width: int, device: str | None = None
+) -> Tensor:
+    if cfg.mask_type == "box":
+        return build_box_mask(height, width, cfg.mask_box_size, device)
+    elif cfg.mask_type == "random":
+        return build_random_mask(
+            height, width, cfg.mask_random_fraction, device
+        )
+    elif cfg.mask_type == "file":
+        raise NotImplementedError
+
+    raise ValueError(f"Unrecognized mask type: {cfg.mask_type}")
 
 
 # ---------------------------------------------------------------------------
 # Data subproblem solver
 # ---------------------------------------------------------------------------
+
 
 def inpaint_data_step(
     x0_prior: Tensor,
@@ -129,7 +154,11 @@ def inpaint_data_step(
 
     Paper: Eq. 26.
     """
-    raise NotImplementedError
+
+    x = mask * y + rho_t * x0_prior
+    x = x / (mask + rho_t)
+
+    return x
 
 
 class InpaintingPnPSolver(PnPSolver):
@@ -158,4 +187,5 @@ class InpaintingPnPSolver(PnPSolver):
 
         Paper: Eq. 26.
         """
-        raise NotImplementedError
+
+        return inpaint_data_step(x0_prior, y, degradation.mask, rho_t)

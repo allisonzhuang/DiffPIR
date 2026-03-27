@@ -122,7 +122,7 @@ class BlurConfig:
     """Blur kernel spatial size.  Paper: 61×61 for both Gaussian and motion blur."""
 
     gaussian_std: float = 3.0
-    """Standard deviation of the Gaussian blur kernel (used when blur_mode='gaussian').
+    """Standard deviation of the Gaussian blur kernel.
 
     Paper: σ_k = 3.0.
     """

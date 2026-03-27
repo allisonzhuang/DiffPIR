@@ -7,7 +7,6 @@ data subproblem solution x₀ = (M⊙y + ρ_t·z₀) / (M + ρ_t) (Eq. 26).
 import pytest
 import torch
 
-from configs import InpaintConfig
 from interfaces import PnPSolver
 from degradations.inpaint import (
     InpaintingDegradation,
@@ -135,7 +134,7 @@ class TestInpaintingDegradationApply:
         y = M ⊙ x, so wherever M=0, y=0 regardless of x.
         """
         mask = torch.zeros(1, 1, 64, 64)  # all masked
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(ones_image)
         assert y.sum().item() == 0.0
 
@@ -144,21 +143,21 @@ class TestInpaintingDegradationApply:
         y = M ⊙ x = x when M=1 everywhere.
         """
         mask = torch.ones(1, 1, 64, 64)  # all observed
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(random_image)
         torch.testing.assert_close(y, random_image)
 
     def test_output_shape(self, random_image):
         """Output shape must match input shape."""
         mask = build_box_mask(64, 64, box_size=32)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(random_image)
         assert y.shape == random_image.shape
 
     def test_output_dtype_float32(self, random_image):
         """Output must be float32."""
         mask = build_box_mask(64, 64, box_size=32)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(random_image)
         assert y.dtype == torch.float32
 
@@ -168,7 +167,7 @@ class TestInpaintingDegradationApply:
         (idempotent): M ⊙ (M ⊙ x) = M ⊙ x.
         """
         mask = build_box_mask(64, 64, box_size=32)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(random_image)
         y2 = deg.apply(y)
         torch.testing.assert_close(y, y2)
@@ -267,8 +266,7 @@ class TestInpaintingPnPSolver:
         inpaint_data_step directly with the degradation's mask.
         """
         mask = build_box_mask(32, 32, box_size=16)
-        cfg = InpaintConfig()
-        deg = InpaintingDegradation(mask, cfg)
+        deg = InpaintingDegradation(mask)
 
         torch.manual_seed(0)
         x0_prior = torch.randn(1, 3, 32, 32)
@@ -282,7 +280,7 @@ class TestInpaintingPnPSolver:
     def test_output_shape(self):
         """Solver output shape must match x0_prior shape."""
         mask = build_box_mask(32, 32, box_size=16)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         x0 = torch.randn(2, 3, 32, 32)
         y = mask * x0
         result = InpaintingPnPSolver().data_step(x0, y, deg, rho_t=1.0)
@@ -305,7 +303,7 @@ class TestInpaintBroadcasting:
         """
         mask = build_box_mask(32, 32, box_size=16)
         x = torch.randn(4, 3, 32, 32)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(x)
         # All batch elements should have the same mask pattern
         for b in range(4):
@@ -320,7 +318,7 @@ class TestInpaintBroadcasting:
         """
         mask = build_box_mask(32, 32, box_size=16)
         x = torch.ones(1, 3, 32, 32)
-        deg = InpaintingDegradation(mask, InpaintConfig())
+        deg = InpaintingDegradation(mask)
         y = deg.apply(x)
         # All channels at a masked pixel should be zero
         for c in range(3):
