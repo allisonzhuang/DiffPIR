@@ -15,33 +15,53 @@ Paper: Appendix B.2, Eqs. 27–28.
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 from configs import BlurConfig
 from interfaces import PnPSolver
+from motionblur.motionblur import Kernel
+
+
+def fft(x: Tensor) -> Tensor:
+    return torch.fft.fft2(x)
+
+
+def ifft(x: Tensor) -> Tensor:
+    return torch.fft.ifft2(x).real
+
+
+def kernel_fft(k: Tensor, h: int, w: int) -> Tensor:
+    kh, kw = k.shape[-2:]
+
+    pad_h = h - kh
+    pad_w = w - kw
+    k = F.pad(k, (0, pad_w, 0, pad_h))
+
+    k = torch.roll(k, shifts=(-(kh // 2), -(kw // 2)), dims=(-2, -1))
+
+    return fft(k)
 
 
 # ---------------------------------------------------------------------------
 # Degradation operator
 # ---------------------------------------------------------------------------
 
+
 class BlurDegradation:
     """Image blurring degradation: circular convolution y = x ⊗ k.
 
     State:
         kernel: Blur kernel k, shape (H_k, W_k), float32.
-        cfg: BlurConfig describing blur mode and kernel parameters.
     """
 
-    def __init__(self, kernel: Tensor, cfg: BlurConfig) -> None:
+    def __init__(self, kernel: Tensor) -> None:
         """Initialise with a pre-computed blur kernel.
 
         Args:
             kernel: Blur kernel k, shape (H_k, W_k), float32, sums to 1.
-            cfg: BlurConfig.
         """
         self.kernel = kernel
-        self.cfg = cfg
 
     def apply(self, x: Tensor) -> Tensor:
         """Apply the blur operator: y = x ⊗ k (circular convolution).
@@ -54,7 +74,15 @@ class BlurDegradation:
 
         Paper: Eq. 27 (noiseless forward pass; noise is added separately).
         """
-        raise NotImplementedError
+        h, w = x.shape[-2:]
+
+        x_hat = fft(x)
+        k_hat = kernel_fft(self.kernel, h, w)
+
+        y_hat = k_hat * x_hat
+        y = ifft(y_hat)
+
+        return y
 
 
 def build_gaussian_kernel(
@@ -74,7 +102,15 @@ def build_gaussian_kernel(
 
     Paper: Section 4.1 — 61×61 Gaussian kernel with σ_k = 3.0.
     """
-    raise NotImplementedError
+    ij = torch.linspace(
+        -(size - 1) / 2, (size - 1) / 2, steps=size, device=device
+    )
+    x, y = torch.meshgrid(ij, ij, indexing="ij")
+
+    k = torch.exp(-(x**2 + y**2) / (2 * std**2))
+    k = k / k.sum()
+
+    return k.to(torch.float32)
 
 
 def build_motion_kernel(
@@ -95,12 +131,27 @@ def build_motion_kernel(
     Paper: Section 4.1 — random motion kernels, 61×61, intensity 0.5,
         generated following [8].
     """
-    raise NotImplementedError
+    k = torch.from_numpy(Kernel((size, size), intensity).kernelMatrix)
+    k = k.to(device).to(torch.float32)
+
+    return k
+
+
+def build_blur_kernel(cfg: BlurConfig, device: str | None = None) -> Tensor:
+    if cfg.blur_mode == "gaussian":
+        return build_gaussian_kernel(cfg.kernel_size, cfg.gaussian_std, device)
+    elif cfg.blur_mode == "motion":
+        return build_motion_kernel(
+            cfg.kernel_size, cfg.motion_intensity, device
+        )
+    else:
+        raise ValueError(f"Unrecognized blur mode: {cfg.blur_mode}")
 
 
 # ---------------------------------------------------------------------------
 # Data subproblem solver
 # ---------------------------------------------------------------------------
+
 
 def blur_data_step_fft(
     x0_prior: Tensor,
@@ -127,7 +178,17 @@ def blur_data_step_fft(
 
     Paper: Eq. 28.
     """
-    raise NotImplementedError
+    h, w = x0_prior.shape[-2:]
+
+    k_hat = kernel_fft(kernel, h, w)
+    k_hat_conj = torch.conj(k_hat)
+    y_hat = fft(y)
+    z_hat = fft(x0_prior)
+
+    x_hat = (k_hat_conj * y_hat + rho_t * z_hat) / (k_hat_conj * k_hat + rho_t)
+
+    x = ifft(x_hat)
+    return x
 
 
 class BlurPnPSolver(PnPSolver):
@@ -156,4 +217,5 @@ class BlurPnPSolver(PnPSolver):
 
         Paper: Eq. 28.
         """
-        raise NotImplementedError
+
+        return blur_data_step_fft(x0_prior, y, degradation.kernel, rho_t)

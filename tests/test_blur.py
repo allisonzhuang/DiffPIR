@@ -9,7 +9,6 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from configs import BlurConfig
 from interfaces import PnPSolver
 from degradations.blur import (
     BlurDegradation,
@@ -139,13 +138,13 @@ class TestBlurDegradationApply:
         """Circular convolution preserves spatial dimensions: y has the same
         shape as x.  Shape mismatch would break the FFT solver.
         """
-        deg = BlurDegradation(gaussian_kernel, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(gaussian_kernel)
         y = deg.apply(small_image)
         assert y.shape == small_image.shape
 
     def test_output_dtype_float32(self, small_image, gaussian_kernel):
         """Output must be float32."""
-        deg = BlurDegradation(gaussian_kernel, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(gaussian_kernel)
         y = deg.apply(small_image)
         assert y.dtype == torch.float32
 
@@ -153,7 +152,7 @@ class TestBlurDegradationApply:
         """Convolving with a delta kernel should return the input unchanged.
         This is the trivial base case: x ⊗ δ = x.
         """
-        deg = BlurDegradation(delta_kernel, BlurConfig(kernel_size=7))
+        deg = BlurDegradation(delta_kernel)
         y = deg.apply(small_image)
         torch.testing.assert_close(y, small_image, atol=1e-5, rtol=1e-5)
 
@@ -162,7 +161,7 @@ class TestBlurDegradationApply:
         the same constant (since ∑k = 1 and all pixel values are equal).
         """
         x = torch.ones(1, 3, 32, 32) * 7.0
-        deg = BlurDegradation(gaussian_kernel, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(gaussian_kernel)
         y = deg.apply(x)
         torch.testing.assert_close(y, x, atol=1e-4, rtol=1e-4)
 
@@ -183,8 +182,7 @@ class TestBlurDegradationApply:
         x = torch.randn(1, 1, 8, 8)
 
         # FFT-based (the implementation under test)
-        cfg = BlurConfig(kernel_size=3)
-        deg = BlurDegradation(k, cfg)
+        deg = BlurDegradation(k)
         y_fft = deg.apply(x)
 
         # Naive circular convolution via torch.nn.functional.conv2d with circular padding
@@ -200,7 +198,7 @@ class TestBlurDegradationApply:
         Zeroing one channel should not affect the others.
         """
         x = torch.randn(1, 3, 16, 16)
-        deg = BlurDegradation(gaussian_kernel, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(gaussian_kernel)
 
         y_full = deg.apply(x)
 
@@ -284,8 +282,7 @@ class TestBlurPnPSolver:
         """The solver adapter must produce the same result as calling
         blur_data_step_fft directly.
         """
-        cfg = BlurConfig(kernel_size=11, gaussian_std=2.0)
-        deg = BlurDegradation(gaussian_kernel, cfg)
+        deg = BlurDegradation(gaussian_kernel)
         y = deg.apply(small_image)
 
         solver = BlurPnPSolver()
@@ -295,8 +292,7 @@ class TestBlurPnPSolver:
 
     def test_output_shape(self, small_image, gaussian_kernel):
         """Solver output shape must match x0_prior."""
-        cfg = BlurConfig(kernel_size=11, gaussian_std=2.0)
-        deg = BlurDegradation(gaussian_kernel, cfg)
+        deg = BlurDegradation(gaussian_kernel)
         result = BlurPnPSolver().data_step(small_image, small_image, deg, rho_t=1.0)
         assert result.shape == small_image.shape
 
@@ -322,7 +318,7 @@ class TestBlurMultiChannelFFT:
         base = torch.randn(1, 1, 32, 32)
         x = torch.cat([base, 2 * base, 3 * base], dim=1)  # (1, 3, 32, 32)
 
-        deg = BlurDegradation(k, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(k)
         y = deg.apply(x)
 
         # Channel 1 should be 2× channel 0, channel 2 should be 3× channel 0
@@ -371,7 +367,7 @@ class TestBlurDataStepInversion:
         torch.manual_seed(0)
         k = build_gaussian_kernel(size=11, std=2.0)
         x_true = torch.randn(1, 1, 32, 32)
-        deg = BlurDegradation(k, BlurConfig(kernel_size=11, gaussian_std=2.0))
+        deg = BlurDegradation(k)
         y = deg.apply(x_true)
 
         # With z₀ = x_true, should recover x_true regardless of ρ_t
@@ -387,7 +383,7 @@ class TestBlurDataStepInversion:
         torch.manual_seed(0)
         k = build_gaussian_kernel(size=7, std=1.5)
         x_true = torch.randn(1, 1, 16, 16)
-        deg = BlurDegradation(k, BlurConfig(kernel_size=7, gaussian_std=1.5))
+        deg = BlurDegradation(k)
         y = deg.apply(x_true)
 
         z0 = x_true + torch.randn_like(x_true) * 0.5  # noisy prior
