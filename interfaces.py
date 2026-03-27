@@ -66,7 +66,6 @@ class PnPSolver(ABC):
         self,
         x0_prior: Tensor,
         y: Tensor,
-        degradation: Any,
         rho_t: float,
     ) -> Tensor:
         """Solve the data subproblem given the prior estimate x̂₀_prior.
@@ -75,8 +74,6 @@ class PnPSolver(ABC):
             x0_prior: Prior estimate of the clean image from the denoiser,
                 shape (B, C, H, W), float32.
             y: Degraded measurement, shape varies by task, float32.
-            degradation: Degradation object (InpaintingDegradation, BlurDegradation,
-                SRDegradation, …) providing the operator H and its parameters.
             rho_t: Penalty coefficient ρ_t = λσ_n²/σ_t² at the current timestep.
 
         Returns:

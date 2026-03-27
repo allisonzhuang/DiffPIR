@@ -37,13 +37,13 @@ class SRDegradation:
         cfg: SRConfig describing scale factor and solver type.
     """
 
-    def __init__(self, cfg: SRConfig) -> None:
+    def __init__(self, scale_factor: float) -> None:
         """Initialise with the SR configuration.
 
         Args:
             cfg: SRConfig specifying scale_factor and solver.
         """
-        self.cfg = cfg
+        self.sf = scale_factor
 
     def apply(self, x: Tensor) -> Tensor:
         """Bicubic downsample x by scale factor sf: y = x ↓_{sf}^{bicubic}.
@@ -56,8 +56,9 @@ class SRDegradation:
 
         Paper: Eq. 29.
         """
-        sf = 1 / self.cfg.scale_factor
-        return F.interpolate(x, scale_factor=sf, mode="bicubic", antialias=True)
+        return F.interpolate(
+            x, scale_factor=1 / self.sf, mode="bicubic", antialias=True
+        )
 
     def upsample(self, y: Tensor, target_size: tuple[int, int]) -> Tensor:
         """Bicubic upsample the low-resolution image back to HR size.
@@ -84,7 +85,7 @@ class SRDegradation:
 def sr_data_step_ibp(
     x0_prior: Tensor,
     y: Tensor,
-    degradation: SRDegradation,
+    sf: float,
     gamma_t: float,
     n_iter: int = 6,
 ) -> Tensor:
@@ -107,9 +108,10 @@ def sr_data_step_ibp(
     """
     x = x0_prior
     h, w = x.shape[-2:]
+    sr = SRDegradation(sf)
 
     for _ in range(n_iter):
-        x = x + gamma_t * degradation.upsample(y - degradation.apply(x), (h, w))
+        x = x + gamma_t * sr.upsample(y - sr.apply(x), (h, w))
 
     return x
 
@@ -214,11 +216,14 @@ class SRPnPSolver(PnPSolver):
     ``degradation.cfg.solver``.
     """
 
+    def __init__(self, cfg: SRConfig) -> None:
+        super().__init__()
+        self.cfg = cfg
+
     def data_step(
         self,
         x0_prior: Tensor,
         y: Tensor,
-        degradation: SRDegradation,
         rho_t: float,
     ) -> Tensor:
         """Solve the SR data subproblem (Eq. 30 or 31).
@@ -235,12 +240,12 @@ class SRPnPSolver(PnPSolver):
         Paper: Eqs. 30–31.
         """
 
-        if degradation.cfg.solver == "fft":
-            return sr_data_step_fft(
-                x0_prior, y, degradation.cfg.scale_factor, rho_t
-            )
+        if self.cfg.solver == "fft":
+            return sr_data_step_fft(x0_prior, y, self.cfg.scale_factor, rho_t)
 
-        n_iter = degradation.cfg.ibp_n_iter
+        n_iter = self.cfg.ibp_n_iter
         gamma_t = 1 / (1 + rho_t)
 
-        return sr_data_step_ibp(x0_prior, y, degradation, gamma_t, n_iter)
+        return sr_data_step_ibp(
+            x0_prior, y, self.cfg.scale_factor, gamma_t, n_iter
+        )

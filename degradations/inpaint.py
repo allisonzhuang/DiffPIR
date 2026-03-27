@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor
+from scipy.io import loadmat
 
 from configs import InpaintConfig
 from interfaces import PnPSolver
@@ -22,37 +23,6 @@ from interfaces import PnPSolver
 # ---------------------------------------------------------------------------
 # Degradation operator
 # ---------------------------------------------------------------------------
-
-
-class InpaintingDegradation:
-    """Inpainting degradation: element-wise masking y = M ⊙ x.
-
-    State:
-        mask: Binary mask tensor M, shape (1, 1, H, W) or (B, 1, H, W), float32.
-            1 = known pixel, 0 = missing pixel.
-    """
-
-    def __init__(self, mask: Tensor) -> None:
-        """Initialise with a pre-computed mask tensor.
-
-        Args:
-            mask: Binary mask M, shape (1, 1, H, W) or (B, 1, H, W), float32.
-                1 = observed, 0 = missing.
-        """
-        self.mask = mask
-
-    def apply(self, x: Tensor) -> Tensor:
-        """Apply the masking operator: y = M ⊙ x.
-
-        Args:
-            x: Clean image, shape (B, C, H, W), float32.
-
-        Returns:
-            y: Masked image, same shape as x, float32.
-
-        Paper: Eq. 25.
-        """
-        return self.mask * x
 
 
 def build_box_mask(
@@ -119,9 +89,52 @@ def build_mask(
             height, width, cfg.mask_random_fraction, device
         )
     elif cfg.mask_type == "file":
-        raise NotImplementedError
+        mat = loadmat(cfg.mask_path)
+        mat = mat[list(mat.keys())[0]]
+
+        k = torch.from_numpy(mat["mask"]).unsqueeze(0).unsqueeze(0)
+        k = k.to(device=device, dtype=torch.float32)
+
+        return k
 
     raise ValueError(f"Unrecognized mask type: {cfg.mask_type}")
+
+
+class InpaintingDegradation:
+    """Inpainting degradation: element-wise masking y = M ⊙ x.
+
+    State:
+        mask: Binary mask tensor M, shape (1, 1, H, W) or (B, 1, H, W), float32.
+            1 = known pixel, 0 = missing pixel.
+    """
+
+    def __init__(
+        self,
+        cfg: InpaintConfig,
+        height: int,
+        width: int,
+        device: str | None = None,
+    ) -> None:
+        """Initialise with a pre-computed mask tensor.
+
+        Args:
+            mask: Binary mask M, shape (1, 1, H, W) or (B, 1, H, W), float32.
+                1 = observed, 0 = missing.
+        """
+        self.mask = build_mask(cfg, height, width, device)
+
+    def apply(self, x: Tensor) -> Tensor:
+        """Apply the masking operator: y = M ⊙ x.
+
+        Args:
+            x: Clean image, shape (B, C, H, W), float32.
+
+        Returns:
+            y: Masked image, same shape as x, float32.
+
+        Paper: Eq. 25.
+        """
+        return self.mask * x
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +168,9 @@ def inpaint_data_step(
     Paper: Eq. 26.
     """
 
+    if rho_t == 0:
+        return mask * y + (1 - mask) * x0_prior
+
     x = mask * y + rho_t * x0_prior
     x = x / (mask + rho_t)
 
@@ -167,11 +183,14 @@ class InpaintingPnPSolver(PnPSolver):
     Delegates to ``inpaint_data_step``.  Holds no additional state.
     """
 
+    def __init__(self, mask: Tensor) -> None:
+        super().__init__()
+        self.mask = mask
+
     def data_step(
         self,
         x0_prior: Tensor,
         y: Tensor,
-        degradation: InpaintingDegradation,
         rho_t: float,
     ) -> Tensor:
         """Solve the inpainting data subproblem (Eq. 26).
@@ -188,4 +207,4 @@ class InpaintingPnPSolver(PnPSolver):
         Paper: Eq. 26.
         """
 
-        return inpaint_data_step(x0_prior, y, degradation.mask, rho_t)
+        return inpaint_data_step(x0_prior, y, self.mask, rho_t)

@@ -1,74 +1,79 @@
-"""
-restoration/diffpir.py — DiffPIR outer sampling loop.
-
-Implements Algorithm 1 from the paper: iterates the HQS prior step, data step,
-and re-noising step from t = t_start down to t = 1, then returns x₀.
-
-Paper: Section 3.3; Algorithm 1.
-"""
-
-from __future__ import annotations
-
-from typing import Any, Dict
+from typing import Any, Callable, Dict
+from math import sqrt, floor
 
 import torch
 from torch import Tensor
 
-from configs import SolverConfig
+from configs import SolverConfig, DiffusionConfig
 from interfaces import DenoiserPrior, PnPSolver
 
 
+def build_noise_scheduler(cfg: DiffusionConfig):
+    T = cfg.T
+
+    beta_min = cfg.beta_start
+    beta_max = cfg.beta_end
+
+    beta = [0.0] * (T + 1)
+    alpha = [0.0] * (T + 1)
+    alpha_bar = [1.0] * (T + 1)
+    sigma_bar = [0.0] * (T + 1)
+
+    for t in range(T + 1):
+        beta[t] = beta_min + t * (beta_max - beta_min) / T
+        alpha[t] = 1 - beta[t]
+        alpha_bar[t] = alpha_bar[t - 1] * alpha[t]
+        sigma_bar[t] = sqrt((1 - alpha_bar[t]) / alpha_bar[t])
+
+    return {
+        "T": T,
+        "beta": beta,
+        "alpha": alpha,
+        "alpha_bar": alpha_bar,
+        "sigma_bar": sigma_bar,
+    }
+
+
 def diffpir_restore(
-    x_T: Tensor,
-    y: Tensor,
-    denoiser: DenoiserPrior,
-    solver: PnPSolver,
-    degradation: Any,
     cfg: SolverConfig,
-    noise_schedule: Dict[str, Tensor],
-    timesteps: list[int],
-    rho_schedule: list[float],
+    y: Tensor,
+    prior: DenoiserPrior,
+    pnp_solver: PnPSolver,
+    pnp_step: Callable,
+    noise_scheduler: Dict[str, Any],
 ) -> Tensor:
-    """Run the full DiffPIR reverse diffusion to restore a degraded image.
+    lambda_ = cfg.lambda_
+    sigma = cfg.sigma_n
+    zeta = cfg.zeta
+    n_steps = cfg.n_steps
 
-    Implements Algorithm 1:
-      For t = T … 1:
-        1. Prior step   — x̂₀⁽ᵗ⁾ ← denoiser(x_t, t)              (Eq. 12a)
-        2. Data step    — x̂₀⁽ᵗ⁾ ← solver(x̂₀⁽ᵗ⁾, y, ρ_t)        (Eq. 12b)
-        3. Re-noise     — x_{t-1} ← ddim_step(x_t, x̂₀⁽ᵗ⁾, …)    (Eq. 15)
+    T = noise_scheduler["T"]
+    timesteps = [
+        max(1, floor((sqrt(T) * i / n_steps) ** 2))
+        for i in range(1, n_steps + 1)
+    ]
 
-    Args:
-        x_T: Initial noise sample x_T ~ N(0, I), shape (B, C, H, W), float32.
-        y: Degraded measurement, shape depends on task, float32.
-        denoiser: Plug-and-play denoiser prior implementing DenoiserPrior.
-        solver: Data subproblem solver implementing PnPSolver.
-        degradation: Degradation object providing the operator H.
-        cfg: SolverConfig with lambda_, zeta, sigma_n, n_steps, t_start.
-        noise_schedule: Pre-computed schedule from ``make_noise_schedule``.
-        timesteps: Ordered timestep sequence from ``build_ddim_timestep_sequence``.
-        rho_schedule: Pre-computed ρ_t values from ``precompute_rho_schedule``.
+    x = torch.randn_like(y)
 
-    Returns:
-        x0: Restored clean image x₀, same spatial shape as x_T, float32.
+    alpha_bar = noise_scheduler["alpha_bar"]
+    sigma_bar = noise_scheduler["sigma_bar"]
 
-    Paper: Algorithm 1; Section 3.3.
-    """
-    raise NotImplementedError
+    rev_ts = list(reversed(timesteps))
+    for i, t in enumerate(rev_ts):
 
+        t_prev = rev_ts[i + 1] if i + 1 < n_steps else 0
+        rho = lambda_ * sigma**2 / (sigma_bar[t] ** 2)
 
-def initialize_x_T(
-    shape: tuple[int, ...],
-    device: torch.device | str,
-) -> Tensor:
-    """Sample the initial noise x_T ~ N(0, I).
+        prox_f = lambda x, _rho=rho: pnp_solver.data_step(x, y, _rho)
+        prox_g = lambda z, _t=t: prior.denoise(z, _t, noise_scheduler)
 
-    Args:
-        shape: Desired shape (B, C, H, W).
-        device: Target device.
+        x_hat = pnp_step(prox_f, prox_g, x)
 
-    Returns:
-        x_T: Gaussian noise tensor, shape ``shape``, float32.
+        eps_hat = (x - sqrt(alpha_bar[t]) * x_hat) / sqrt(1 - alpha_bar[t])
+        eps = torch.randn_like(y)
 
-    Paper: Algorithm 1 line 1.
-    """
-    raise NotImplementedError
+        x = sqrt(alpha_bar[t_prev]) * x_hat + sqrt(1 - alpha_bar[t_prev]) * (
+            sqrt(1 - zeta) * eps_hat + sqrt(zeta) * eps
+        )
+
+    return x

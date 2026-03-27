@@ -48,43 +48,6 @@ def kernel_fft(k: Tensor, h: int, w: int) -> Tensor:
 # ---------------------------------------------------------------------------
 
 
-class BlurDegradation:
-    """Image blurring degradation: circular convolution y = x ⊗ k.
-
-    State:
-        kernel: Blur kernel k, shape (H_k, W_k), float32.
-    """
-
-    def __init__(self, kernel: Tensor) -> None:
-        """Initialise with a pre-computed blur kernel.
-
-        Args:
-            kernel: Blur kernel k, shape (H_k, W_k), float32, sums to 1.
-        """
-        self.kernel = kernel
-
-    def apply(self, x: Tensor) -> Tensor:
-        """Apply the blur operator: y = x ⊗ k (circular convolution).
-
-        Args:
-            x: Clean image, shape (B, C, H, W), float32.
-
-        Returns:
-            y: Blurred image, same shape as x, float32.
-
-        Paper: Eq. 27 (noiseless forward pass; noise is added separately).
-        """
-        h, w = x.shape[-2:]
-
-        x_hat = fft(x)
-        k_hat = kernel_fft(self.kernel, h, w)
-
-        y_hat = k_hat * x_hat
-        y = ifft(y_hat)
-
-        return y
-
-
 def build_gaussian_kernel(
     size: int,
     std: float,
@@ -148,6 +111,43 @@ def build_blur_kernel(cfg: BlurConfig, device: str | None = None) -> Tensor:
         raise ValueError(f"Unrecognized blur mode: {cfg.blur_mode}")
 
 
+class BlurDegradation:
+    """Image blurring degradation: circular convolution y = x ⊗ k.
+
+    State:
+        kernel: Blur kernel k, shape (H_k, W_k), float32.
+    """
+
+    def __init__(self, cfg: BlurConfig, device: str | None = None) -> None:
+        """Initialise with a pre-computed blur kernel.
+
+        Args:
+            kernel: Blur kernel k, shape (H_k, W_k), float32, sums to 1.
+        """
+        self.kernel = build_blur_kernel(cfg, device)
+
+    def apply(self, x: Tensor) -> Tensor:
+        """Apply the blur operator: y = x ⊗ k (circular convolution).
+
+        Args:
+            x: Clean image, shape (B, C, H, W), float32.
+
+        Returns:
+            y: Blurred image, same shape as x, float32.
+
+        Paper: Eq. 27 (noiseless forward pass; noise is added separately).
+        """
+        h, w = x.shape[-2:]
+
+        x_hat = fft(x)
+        k_hat = kernel_fft(self.kernel, h, w)
+
+        y_hat = k_hat * x_hat
+        y = ifft(y_hat)
+
+        return y
+
+
 # ---------------------------------------------------------------------------
 # Data subproblem solver
 # ---------------------------------------------------------------------------
@@ -197,11 +197,13 @@ class BlurPnPSolver(PnPSolver):
     Delegates to ``blur_data_step_fft``.  Holds no additional state.
     """
 
+    def __init__(self, kernel: Tensor) -> None:
+        self.kernel = kernel
+
     def data_step(
         self,
         x0_prior: Tensor,
         y: Tensor,
-        degradation: BlurDegradation,
         rho_t: float,
     ) -> Tensor:
         """Solve the deblurring data subproblem via FFT (Eq. 28).
@@ -218,4 +220,4 @@ class BlurPnPSolver(PnPSolver):
         Paper: Eq. 28.
         """
 
-        return blur_data_step_fft(x0_prior, y, degradation.kernel, rho_t)
+        return blur_data_step_fft(x0_prior, y, self.kernel, rho_t)

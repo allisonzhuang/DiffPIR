@@ -1,13 +1,3 @@
-"""
-configs.py — Python dataclasses for all DiffPIR configuration.
-
-No YAML, no argparse, no external config files.  All hyperparameters live here.
-Each degradation type has its own dedicated config.
-Hyperparameter values from Table 3 (Appendix B.1) are noted in comments.
-"""
-
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional, Union
@@ -18,6 +8,7 @@ import torch
 # ---------------------------------------------------------------------------
 # Diffusion schedule
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class DiffusionConfig:
@@ -36,16 +27,10 @@ class DiffusionConfig:
     beta_end: float = 2e-2
     """Ending value of the linear noise schedule β_T."""
 
-    schedule_type: Literal["linear", "cosine"] = "linear"
-    """Noise schedule type.  'linear' matches DDPM [24]; 'cosine' matches [41]."""
-
-    dtype: torch.dtype = torch.float32
-    """All diffusion tensors are kept in float32 as required by the paper."""
-
-
 # ---------------------------------------------------------------------------
 # HQS / DiffPIR sampling loop
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SolverConfig:
@@ -75,16 +60,11 @@ class SolverConfig:
     n_steps: int = 100
     """Number of reverse diffusion steps (NFEs).  Paper uses 20 or 100."""
 
-    t_start: int = 1000
-    """Starting timestep t_start for the reverse diffusion.
-
-    Paper: Section 4.4, Figure 7.  Can be < T to skip early noisy steps.
-    """
-
 
 # ---------------------------------------------------------------------------
 # Degradation configs — one per task
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class InpaintConfig:
@@ -168,38 +148,3 @@ DegradationConfig = Union[InpaintConfig, BlurConfig, SRConfig]
 
 Use isinstance checks or a task-specific factory to route to the right solver.
 """
-
-
-# ---------------------------------------------------------------------------
-# Training
-# ---------------------------------------------------------------------------
-
-@dataclass
-class TrainingConfig:
-    """Configuration for training the diffusion model from scratch.
-
-    DiffPIR itself is training-free (it uses pre-trained weights), but this
-    config is provided for completeness and for ablation experiments that
-    require fine-tuning the denoiser.
-    """
-
-    lr: float = 2e-5
-    """Learning rate for the Adam optimiser."""
-
-    batch_size: int = 16
-    """Training batch size."""
-
-    n_epochs: int = 100
-    """Total number of training epochs."""
-
-    ckpt_dir: Path = Path("checkpoints")
-    """Directory where model checkpoints are saved."""
-
-    log_dir: Path = Path("logs")
-    """Directory for TensorBoard / WandB logs."""
-
-    keep_last_n: int = 5
-    """Number of most-recent checkpoints to retain."""
-
-    seed: int = 42
-    """Global random seed for reproducibility."""
