@@ -7,9 +7,11 @@ from interfaces import DenoiserPrior
 
 
 class DRUNet(DenoiserPrior):
-    def __init__(self) -> None:
+    def __init__(self, device="cpu") -> None:
         super().__init__()
         self.net = models.DRUNet()
+        self.net = self.net.to(device)
+        self.device = device
 
     def denoise(
         self, x_t: Tensor, t: int, noise_schedule: Dict[str, Tensor]
