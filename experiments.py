@@ -49,24 +49,40 @@ TEST_IMAGES = {
 IMG_SIZE = 256
 
 
-def load_test_images(device="cpu"):
-    """Load test images as (B=1, 3, 256, 256) tensors in [0, 1]."""
-    import requests
+def load_test_images(device="cpu", image_dir=None):
+    """Load test images as (B=1, 3, 256, 256) tensors in [0, 1].
+
+    If image_dir is given, load all .png/.jpg files from that directory.
+    Otherwise, download the default test images from URLs.
+    """
     from PIL import Image
-    from io import BytesIO
 
     images = {}
     transform = T.Compose([T.Resize(IMG_SIZE), T.CenterCrop(IMG_SIZE), T.ToTensor()])
 
-    for name, url in TEST_IMAGES.items():
-        try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-            img = Image.open(BytesIO(resp.content)).convert("RGB")
-            x = transform(img).unsqueeze(0).to(device)
-            images[name] = x
-            print(f"  Loaded {name}: {x.shape}")
-        except Exception as e:
-            print(f"  Failed to load {name}: {e}")
+    if image_dir is not None:
+        img_dir = Path(image_dir)
+        paths = sorted(img_dir.glob("*.png")) + sorted(img_dir.glob("*.jpg"))
+        for p in paths:
+            try:
+                img = Image.open(p).convert("RGB")
+                x = transform(img).unsqueeze(0).to(device)
+                images[p.stem] = x
+            except Exception as e:
+                print(f"  Failed to load {p.name}: {e}")
+        print(f"  Loaded {len(images)} images from {image_dir}")
+    else:
+        import requests
+        from io import BytesIO
+        for name, url in TEST_IMAGES.items():
+            try:
+                resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+                img = Image.open(BytesIO(resp.content)).convert("RGB")
+                x = transform(img).unsqueeze(0).to(device)
+                images[name] = x
+                print(f"  Loaded {name}: {x.shape}")
+            except Exception as e:
+                print(f"  Failed to load {name}: {e}")
 
     return images
 
@@ -257,11 +273,12 @@ def run_experiments(
     methods=("diffpir_hqs_diffunet", "diffpir_drs_diffunet", "dpir", "dps"),
     device="cuda",
     output_dir="outputs",
+    image_dir=None,
 ):
     os.makedirs(output_dir, exist_ok=True)
 
     print("Loading test images...")
-    images = load_test_images(device)
+    images = load_test_images(device, image_dir=image_dir)
     if not images:
         raise RuntimeError("No images loaded!")
 
@@ -414,8 +431,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--methods", nargs="+",
-        default=["diffpir_hqs_diffunet", "diffpir_hqs_drunet", "diffpir_drs_diffunet", "dps"],
+        default=["diffpir_hqs_diffunet", "diffpir_drs_diffunet", "dpir", "dps"],
     )
+    parser.add_argument("--image-dir", default=None, help="Directory of test images (overrides URL downloads)")
     args = parser.parse_args()
 
     run_experiments(
@@ -423,4 +441,5 @@ if __name__ == "__main__":
         methods=args.methods,
         device=args.device,
         output_dir=args.output_dir,
+        image_dir=args.image_dir,
     )

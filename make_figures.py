@@ -2,6 +2,7 @@
 make_figures.py — Generate comparison figure grids and metrics bar charts.
 """
 
+import argparse
 import json
 from pathlib import Path
 
@@ -12,8 +13,17 @@ import matplotlib.image as mpimg
 import numpy as np
 
 
-OUTPUT_DIR = Path("outputs")
-FIGURES_DIR = Path("figures")
+parser = argparse.ArgumentParser()
+parser.add_argument("--output-dir", type=str, default="outputs", help="Directory with experiment outputs")
+parser.add_argument("--figures-dir", type=str, default="figures", help="Directory to save figures")
+parser.add_argument("--images", type=str, nargs="*", default=None,
+                    help="Image names to show in grid (auto-detected if not given)")
+parser.add_argument("--max-images", type=int, default=5,
+                    help="Max images to show in comparison grid when auto-detecting")
+args = parser.parse_args()
+
+OUTPUT_DIR = Path(args.output_dir)
+FIGURES_DIR = Path(args.figures_dir)
 FIGURES_DIR.mkdir(exist_ok=True)
 
 METHODS = ["ground_truth", "degraded", "diffpir_hqs_diffunet", "diffpir_drs_diffunet", "dpir", "dps"]
@@ -33,7 +43,26 @@ TASK_LABELS = {
     "inpainting_random": "Inpainting (Random)",
 }
 
-IMAGES = ["lenna", "butterfly", "celeba"]
+
+def discover_images():
+    """Auto-detect image names from the output directory."""
+    if args.images:
+        return args.images
+    # Find first task directory and list subdirectories
+    for task in TASK_LABELS:
+        task_dir = OUTPUT_DIR / task
+        if task_dir.exists():
+            img_names = sorted([d.name for d in task_dir.iterdir() if d.is_dir()])
+            if img_names:
+                # Sample evenly if too many
+                if len(img_names) > args.max_images:
+                    step = len(img_names) // args.max_images
+                    img_names = img_names[::step][:args.max_images]
+                return img_names
+    return []
+
+
+IMAGES = discover_images()
 
 
 def make_comparison_grid():
